@@ -4,9 +4,14 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+torch = "*"
+image = "*"
+pillow = "*"
+numpy = "*"
+opencv-python = "*"
 
 [dev-packages]
 
 [requires]
-python_version = "3.9"
-python_full_version = "3.9.21"
+python_version = "3.13"
+python_full_version = "3.13.2"
