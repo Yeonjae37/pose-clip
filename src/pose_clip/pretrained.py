@@ -779,16 +779,21 @@ def download_pretrained(
         download_url = ''
 
     if download_url:
+        print("download url")
         target = download_pretrained_from_url(download_url, cache_dir=cache_dir)
     elif download_hf_hub:
         has_hf_hub(True)
+        print("download_hf_hub")
         # we assume the hf_hub entries in pretrained config combine model_id + filename in
         # 'org/model_name/filename.pt' form. To specify just the model id w/o filename and
         # use 'open_clip_pytorch_model.bin' default, there must be a trailing slash 'org/model_name/'.
         model_id, filename = os.path.split(download_hf_hub)
         if filename:
+            print("filename")
             target = download_pretrained_from_hf(model_id, filename=filename, cache_dir=cache_dir)
         else:
+            print("not filename")
             target = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
-
+    
+    print("target : ", target)
     return target

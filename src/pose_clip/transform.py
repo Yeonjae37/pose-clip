@@ -38,7 +38,7 @@ _PREPROCESS_KEYS = set(asdict(PreprocessCfg()).keys())
 
 
 def merge_preprocess_dict(
-        base: Union[PreprocessCfg, Dict],
+        base: Dict,
         overlay: Dict,
 ):
     """ Merge overlay key-value pairs on top of base preprocess cfg or dict.
@@ -48,6 +48,7 @@ def merge_preprocess_dict(
         base_clean = asdict(base)
     else:
         base_clean = {k: v for k, v in base.items() if k in _PREPROCESS_KEYS}
+
     if overlay:
         overlay_clean = {k: v for k, v in overlay.items() if k in _PREPROCESS_KEYS and v is not None}
         base_clean.update(overlay_clean)

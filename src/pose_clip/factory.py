@@ -15,8 +15,8 @@ from .model import CLIP, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 #from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
-from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained,\
-    list_pretrained_tags_by_model
+from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, \
+    download_pretrained_from_hf, list_pretrained_tags_by_model
 from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
 from .tokenizer import HFTokenizer, SimpleTokenizer, DEFAULT_CONTEXT_LENGTH
 
@@ -229,191 +229,54 @@ def create_model( # CLIP 모델 생성
         load_weights_only: bool = True,
         **model_kwargs,
 ):
-    """Creates and configures a contrastive vision-language model.
-
-    Args:
-        model_name: Name of the model architecture to create. Can be a local model name
-            or a Hugging Face model ID prefixed with 'hf-hub:'.
-        pretrained: Tag/path for pretrained model weights. Can be:
-            - A pretrained tag name (e.g., 'openai')
-            - A path to local weights
-            - None to initialize with random weights
-        precision: Model precision/AMP configuration. Options:
-            - 'fp32': 32-bit floating point
-            - 'fp16'/'bf16': Mixed precision with FP32 for certain layers
-            - 'pure_fp16'/'pure_bf16': Pure 16-bit precision
-        device: Device to load the model on ('cpu', 'cuda', or torch.device object)
-        jit: If True, JIT compile the model
-        force_quick_gelu: Force use of QuickGELU activation
-        force_custom_text: Force use of custom text encoder
-        force_patch_dropout: Override default patch dropout value
-        force_image_size: Override default image size for vision encoder
-        force_preprocess_cfg: Override default preprocessing configuration
-        pretrained_image: Load pretrained weights for timm vision models
-        pretrained_hf: Load pretrained weights for HF text models when not loading CLIP weights
-        cache_dir: Override default cache directory for downloaded model files
-        output_dict: If True and model supports it, return dictionary of features
-        require_pretrained: Raise error if pretrained weights cannot be loaded
-        load_weights_only: Only deserialize model weights and unpickling torch checkpoints (for safety)
-        **model_kwargs: Additional keyword arguments passed to model constructor
-
-    Returns:
-        Created and configured model instance
-
-    Raises:
-        RuntimeError: If model config is not found or required pretrained weights
-            cannot be loaded
-
-    Examples:
-        # Create basic CLIP model
-        model = create_model('ViT-B/32')
-
-        # Create CLIP model with mixed precision on GPU
-        model = create_model('ViT-B/32', precision='fp16', device='cuda')
-
-        # Load pretrained OpenAI weights
-        model = create_model('ViT-B/32', pretrained='openai')
-
-        # Load Hugging Face model
-        model = create_model('hf-hub:organization/model-name')
-    """
-
-    force_preprocess_cfg = force_preprocess_cfg or {}
-    preprocess_cfg = asdict(PreprocessCfg())
-    has_hf_hub_prefix = model_name.startswith(HF_HUB_PREFIX)
-    if has_hf_hub_prefix: 
-        model_id = model_name[len(HF_HUB_PREFIX):]
-        checkpoint_path = download_pretrained_from_hf(model_id, cache_dir=cache_dir)
-        config = _get_hf_config(model_id, cache_dir=cache_dir)
-        preprocess_cfg = merge_preprocess_dict(preprocess_cfg, config['preprocess_cfg'])
-        model_cfg = config['model_cfg']
-        pretrained_hf = False  # override, no need to load original HF text weights
-    else: # 'ViT-B/32' -> 'ViT-B-32'
-        model_name = model_name.replace('/', '-')  # for callers using old naming with / in ViT names
-        checkpoint_path = None
-        model_cfg = None
 
     if isinstance(device, str):
         device = torch.device(device)
 
-    model_cfg = model_cfg or get_model_config(model_name)
+    model_cfg = get_model_config(model_name)
     if model_cfg is not None:
         logging.info(f'Loaded {model_name} model config.')
     else:
         logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
         raise RuntimeError(f'Model config for {model_name} not found.')
 
-    if force_quick_gelu:
-        # override for use of QuickGELU on non-OpenAI transformer models
-        model_cfg["quick_gelu"] = True
-
-    if force_patch_dropout is not None:
-        # override the default patch dropout value
-        model_cfg["vision_cfg"]["patch_dropout"] = force_patch_dropout
-
-    if force_image_size is not None:
-        # override model config's image size
-        model_cfg["vision_cfg"]["image_size"] = force_image_size
-
-    is_timm_model = 'timm_model_name' in model_cfg.get('vision_cfg', {})
-    if pretrained_image:
-        if is_timm_model:
-            # pretrained weight loading for timm models set via vision_cfg
-            model_cfg['vision_cfg']['timm_model_pretrained'] = True
-        else:
-            assert False, 'pretrained image towers currently only supported for timm models'
-
-    # cast_dtype set for fp16 and bf16 (manual mixed-precision), not set for 'amp' or 'pure' modes
-    cast_dtype = get_cast_dtype(precision)
-    is_hf_model = 'hf_model_name' in model_cfg.get('text_cfg', {})
-    if is_hf_model:
-        # load pretrained weights for HF text model IFF no CLIP weights being loaded
-        model_cfg['text_cfg']['hf_model_pretrained'] = pretrained_hf and not pretrained
-    custom_text = model_cfg.pop('custom_text', False) or force_custom_text or is_hf_model
-
     model_cfg = dict(model_cfg, **model_kwargs)  # merge cfg dict w/ kwargs (kwargs overrides cfg)
-    if custom_text:
-        if "multimodal_cfg" in model_cfg:
-            model = CoCa(**model_cfg, cast_dtype=cast_dtype)
-    else:
-        model = CLIP(**model_cfg, cast_dtype=cast_dtype)
 
-    if precision in ("fp16", "bf16"):
-        dtype = torch.float16 if 'fp16' in precision else torch.bfloat16
-        # manual mixed precision that matches original OpenAI behaviour
-        if is_timm_model:
-            # FIXME this is a bit janky, create timm based model in low-precision and
-            # then cast only LayerNormFp32 instances back to float32 so they don't break.
-            # Why? The convert_weights_to_lp fn only works with native models.
-            model.to(device=device, dtype=dtype)
-            from .transformer import LayerNormFp32
+    model = CLIP(**model_cfg)
 
-            def _convert_ln(m):
-                if isinstance(m, LayerNormFp32):
-                    m.weight.data = m.weight.data.to(torch.float32)
-                    m.bias.data = m.bias.data.to(torch.float32)
-            model.apply(_convert_ln)
-        else:
-            model.to(device=device)
-            convert_weights_to_lp(model, dtype=dtype)
-    elif precision in ("pure_fp16", "pure_bf16"): # pure_fp16, pure_bf16은 모든 레이어를 완전히 FP16, BF16으로 변환하는 모드
-        dtype = torch.float16 if 'fp16' in precision else torch.bfloat16
-        model.to(device=device, dtype=dtype)
-    else: # 기본(precision이 FP32)인 경우
-        model.to(device=device)
+    dtype = {
+        "fp16": torch.float16,
+        "bf16": torch.bfloat16
+    }.get(precision, torch.float32)
 
-    pretrained_loaded = False
+    model.to(device=device, dtype=dtype)
+
     if pretrained:
-        checkpoint_path = ''
-        pretrained_cfg = get_pretrained_cfg(model_name, pretrained)
-        if pretrained_cfg:
-            checkpoint_path = download_pretrained(pretrained_cfg, cache_dir=cache_dir)
-            preprocess_cfg = merge_preprocess_dict(preprocess_cfg, pretrained_cfg)
-            pretrained_quick_gelu = pretrained_cfg.get('quick_gelu', False)
-            model_quick_gelu = model_cfg.get('quick_gelu', False)
-            if pretrained_quick_gelu and not model_quick_gelu:
-                warnings.warn(
-                    f'These pretrained weights were trained with QuickGELU activation but the model config does '
-                    f'not have that enabled. Consider using a model config with a "-quickgelu" suffix or enable with a flag.')
-            elif not pretrained_quick_gelu and model_quick_gelu:
-                warnings.warn(
-                    f'The pretrained weights were not trained with QuickGELU but this activation is enabled in the '
-                    f'model config, consider using a model config without QuickGELU or disable override flags.')
-        elif os.path.exists(pretrained):
-            checkpoint_path = pretrained
-
-        if checkpoint_path:
-            logging.info(f'Loading pretrained {model_name} weights ({pretrained}).')
-            load_checkpoint(model, checkpoint_path, weights_only=load_weights_only)
+        if os.path.exists(pretrained):
+            logging.info(f"Loading pretrained model from {pretrained}")
+            load_checkpoint(model, pretrained, weights_only=load_weights_only)
         else:
-            error_str = (
-                f'Pretrained weights ({pretrained}) not found for model {model_name}.'
-                f' Available pretrained tags ({list_pretrained_tags_by_model(model_name)}.')
-            logging.warning(error_str)
-            raise RuntimeError(error_str)
-        pretrained_loaded = True
-    elif has_hf_hub_prefix:
-        logging.info(f'Loading pretrained {model_name} weights ({checkpoint_path}).')
-        load_checkpoint(model, checkpoint_path, weights_only=load_weights_only)
-        pretrained_loaded = True
-
-    if require_pretrained and not pretrained_loaded:
-        # callers of create_model_from_pretrained always expect pretrained weights
-        raise RuntimeError(
-            f'Pretrained weights were required for (model: {model_name}, pretrained: {pretrained}) but not loaded.')
+            raise RuntimeError(f"Pretrained model not found at: {pretrained}")
+    
+    elif require_pretrained:
+        raise RuntimeError(f"Pretrained model is required but no valid path was provided.")
 
     if output_dict and hasattr(model, "output_dict"):
         model.output_dict = True
 
-    if jit:
-        model = torch.jit.script(model)
+    force_preprocess_cfg = force_preprocess_cfg or {}
+    preprocess_cfg = {
+        'size': 224,
+        'mode': 'RGB',
+        'mean': (0.48145466, 0.4578275, 0.40821073),
+        'std': (0.26862954, 0.26130258, 0.27577711),
+        'interpolation': 'bicubic',
+        'resize_mode': 'shortest',
+        'fill_color': 0
+    }
 
-    # set image preprocessing configuration in model attributes for convenience
-    if getattr(model.visual, 'image_size', None) is not None:
-        # use image_size set on model creation (via config or force_image_size arg)
-        force_preprocess_cfg['size'] = model.visual.image_size
     set_model_preprocess_cfg(model, merge_preprocess_dict(preprocess_cfg, force_preprocess_cfg))
-
+    
     return model
 
 
