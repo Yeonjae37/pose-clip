@@ -22,7 +22,7 @@ To use the pretrained model, download the weight file from the following link:
 **[Download Weights]** (https://drive.google.com/file/d/1GFOh18QQwsAcwavmOOeg8v1ZpQmSELco/view?usp=drive_link)
 
 Once downloaded, place the weight file in the following directory:   
-`models/ViT-B-32-laion2B-s34B-b79K/open_clip_model.safetensors`
+`models/ViT-B-32-laion2B-s34B-b79K.safetensors`
 
 ### **Installation**
 
