@@ -195,7 +195,7 @@ def create_model( # CLIP 모델 생성
     if isinstance(device, str):
         device = torch.device(device)
 
-    model_cfg =get_model_config(model_name)
+    model_cfg = get_model_config(model_name)
     if model_cfg is not None:
         logging.info(f'Loaded {model_name} model config.')
     else:

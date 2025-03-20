@@ -9,6 +9,10 @@ pillow = "*"
 numpy = "*"
 pose-clip = {file = ".", editable = true}
 einops = "*"
+opencv-python = "*"
+pandas = "*"
+scikit-learn = "*"
+seaborn = "*"
 
 [dev-packages]
 
