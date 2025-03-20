@@ -11,6 +11,8 @@ from torch.utils.checkpoint import checkpoint
 from .utils import to_2tuple
 from .pos_embed import get_2d_sincos_pos_embed
 
+from einops import rearrange, reduce, repeat
+
 
 class LayerNormFp32(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16 (by casting to float32 and back)."""
@@ -225,6 +227,7 @@ class ResidualAttentionBlock(nn.Module):
             norm_layer: Callable = LayerNorm,
             is_cross_attention: bool = False, # 크로스 어텐션 여부
             batch_first: bool = True,
+            dropout: Optional[float] = 0.0,
     ):
         super().__init__()
 
@@ -335,6 +338,7 @@ class Transformer(nn.Module):
             act_layer: Callable = nn.GELU,
             norm_layer: Callable = LayerNorm,
             batch_first: bool = True,
+            dropout= None,
     ):
         super().__init__()
         self.width = width
@@ -351,6 +355,7 @@ class Transformer(nn.Module):
                 act_layer=act_layer,
                 norm_layer=norm_layer,
                 batch_first=batch_first,
+                dropout=dropout
             )
             for _ in range(layers)
         ])
@@ -438,48 +443,48 @@ class CustomTransformer(nn.Module):
             x = x.transpose(0, 1)  # NLD -> LND
         return x
 
-
 class VisionTransformer(nn.Module):
     output_tokens: torch.jit.Final[bool]
 
     def __init__(
             self,
-            image_size: int,
-            patch_size: int,
-            width: int,
-            layers: int,
-            heads: int,
-            mlp_ratio: float,
-            ls_init_value: float = None,
-            attentional_pool: bool = False,
-            attn_pooler_queries: int = 256,
-            attn_pooler_heads: int = 8,
-            output_dim: int = 512,
-            patch_dropout: float = 0.,
-            no_ln_pre: bool = False,
-            pos_embed_type: str = 'learnable',
-            pool_type: str = 'tok',
-            final_ln_after_pool: bool = False,
-            act_layer: Callable = nn.GELU,
-            norm_layer: Callable = LayerNorm,
-            output_tokens: bool = False,
+            image_size: int, # 입력 이미지 크기
+            patch_size: int, # 패치 크기
+            width: int, # 모델 차원 크기
+            layers: int, # Transformer의 레이어 개수
+            heads: int, # Multi head Attention의 개수
+            mlp_ratio: float, # Feed Forward Layer의 크기 비율
+            ls_init_value: float = None, # LayerScale 초기화 값
+            attentional_pool: bool = False, # Attention Pooling을 사용할지 여부
+            attn_pooler_queries: int = 256, # Attention Pooling 시 사용하는 Query 개수
+            attn_pooler_heads: int = 8, # Attention Pooling에서 사용하는 Attention Head 개수
+            output_dim: int = 512, # 최종 출력 차원
+            patch_dropout: float = 0., # Patch Dropout 확률
+            no_ln_pre: bool = False, # 초기 LayerNorm을 사용할지 여부
+            pos_embed_type: str = 'learnable', # 위치 임베딩 유형
+            pool_type: str = 'tok', # Feature를 Pooling하는 방식 (tok : CLS 토큰 사용, avg : 평균 풀링, none : 풀링 없음)
+            final_ln_after_pool: bool = False, # 최종 LayerNorm을 Pooling 후에 적용할지 여부
+            act_layer: Callable = nn.GELU, # 활성화 함수
+            norm_layer: Callable = LayerNorm, # 정규화 레이어
+            output_tokens: bool = False, # 전체 토큰 출력을 반환할지 여부
     ):
         super().__init__()
         assert pool_type in ('tok', 'avg', 'none')
         self.output_tokens = output_tokens
         image_height, image_width = self.image_size = to_2tuple(image_size)
         patch_height, patch_width = self.patch_size = to_2tuple(patch_size)
-        self.grid_size = (image_height // patch_height, image_width // patch_width)
-        self.final_ln_after_pool = final_ln_after_pool  # currently ignored w/ attn pool enabled
-        self.output_dim = output_dim
+        self.grid_size = (image_height // patch_height, image_width // patch_width) # 이미지를 패치로 나눈 개수 계산
+        self.final_ln_after_pool = final_ln_after_pool  # 풀링 이후 LayerNorm을 적용할지 여부 저장
+        self.output_dim = output_dim # 최종 출력 차원 설정
 
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
+        # 입력 이미지를 patch_size x patch_size 크기의 패치로 변환하는 CNN 레이어.
 
         # class embeddings and positional embeddings
         scale = width ** -0.5
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
-        if pos_embed_type == 'learnable':
-            self.positional_embedding = nn.Parameter(
+        if pos_embed_type == 'learnable': # 위치 임베딩 추가
+            self.positional_embedding = nn.Parameter( 
                 scale * torch.randn(self.grid_size[0] * self.grid_size[1] + 1, width))
         elif pos_embed_type == 'sin_cos_2d':
             # fixed sin-cos embedding
@@ -510,7 +515,7 @@ class VisionTransformer(nn.Module):
             if isinstance(attentional_pool, str):
                 self.attn_pool_type = attentional_pool
                 self.pool_type = 'none'
-                if attentional_pool in ('parallel', 'cascade'):
+                if attentional_pool in ('parallel', 'cascade'): # 병렬, 혹은 계단식
                     self.attn_pool = AttentionalPooler(
                         output_dim,
                         width,
@@ -523,9 +528,23 @@ class VisionTransformer(nn.Module):
                         n_head=attn_pooler_heads,
                         n_queries=1,
                     )
+
                 else:
                     assert False
-            else:
+
+                '''
+                Parallel : 
+                - attn_pool과 attn_pool_contrastive을 동시에 사용
+                - attn_pool : 전체적으로 중요한 정보 추출
+                - attn_pool_contrastive : 대조 학습용으로 추가적인 정보 추출
+
+                Cascade : 
+                - attn_pool -> attn_pool_contrastive 순서로 정보 압축
+                - attn_pool이 첫 번째 처리를 하고, 추가로 더 요약된 특징을 attn_pool_contrastive가 수행
+                '''
+
+
+            else: # 기본 Attentional Pooling 설정
                 self.attn_pool_type = ''
                 self.pool_type = pool_type
                 self.attn_pool = AttentionalPooler(
@@ -536,7 +555,7 @@ class VisionTransformer(nn.Module):
                 )
                 self.attn_pool_contrastive = None
             pool_dim = output_dim
-        else:
+        else: # Attention Pooling을 사용하지 않는 경우
             self.attn_pool = None
             pool_dim = width
             self.pool_type = pool_type
@@ -848,6 +867,7 @@ class MultimodalTransformer(Transformer):
             norm_layer: Callable = LayerNorm,
             output_dim: int = 512,
             batch_first: bool = True,
+            dropout: Optional[float] = 0.0,
     ):
         super().__init__(
             width=width,
@@ -858,6 +878,7 @@ class MultimodalTransformer(Transformer):
             act_layer=act_layer,
             norm_layer=norm_layer,
             batch_first=batch_first,
+            dropout=dropout,
         )
         self.context_length = context_length
         self.cross_attn = nn.ModuleList([
@@ -870,6 +891,7 @@ class MultimodalTransformer(Transformer):
                 norm_layer=norm_layer,
                 is_cross_attention=True,
                 batch_first=batch_first,
+                dropout=dropout,
             )
             for _ in range(layers)
         ])

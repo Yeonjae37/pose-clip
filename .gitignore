@@ -1,6 +1,10 @@
 /tools/
-/data/
+/data/L2249
+/data/NTU_RGB+D
 /models/
+demo_realtime.py
+demo.py
+setup.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

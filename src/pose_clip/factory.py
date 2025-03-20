@@ -15,12 +15,10 @@ from .model import CLIP, convert_to_custom_text_state_dict,\
     resize_pos_embed, get_cast_dtype, resize_text_pos_embed, set_model_preprocess_cfg
 #from .coca_model import CoCa
 from .loss import ClipLoss, DistillClipLoss, CoCaLoss, SigLipLoss
-from .pretrained import is_pretrained_cfg, get_pretrained_cfg, download_pretrained, \
-    download_pretrained_from_hf, list_pretrained_tags_by_model
-from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
-from .tokenizer import HFTokenizer, SimpleTokenizer, DEFAULT_CONTEXT_LENGTH
 
-HF_HUB_PREFIX = 'hf-hub:'
+from .transform import image_transform_v2, AugmentationCfg, PreprocessCfg, merge_preprocess_dict, merge_preprocess_kwargs
+from .tokenizer import SimpleTokenizer, DEFAULT_CONTEXT_LENGTH
+
 _MODEL_CONFIG_PATHS = [Path(__file__).parent / f"model_configs/"]
 _MODEL_CONFIGS = {}  # directory (model_name: config) of model architecture configs
 
@@ -73,21 +71,6 @@ def get_model_config(model_name): # 모델 설정 반환
         return deepcopy(_MODEL_CONFIGS[model_name])
     else:
         return None
-    
-def _get_hf_config(
-        model_id: str,
-        cache_dir: Optional[str] = None,
-):
-    """ Fetch model config from HuggingFace Hub.
-    """
-    config_path = download_pretrained_from_hf(
-        model_id,
-        filename='open_clip_config.json',
-        cache_dir=cache_dir,
-    )
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = json.load(f)
-    return config
 
 def get_tokenizer(
         model_name: str = '', # 모델 이름
@@ -95,21 +78,8 @@ def get_tokenizer(
         cache_dir: Optional[str] = None, # hugging face 모델 다운로드할 캐시 디렉토리
         **kwargs, # 추가적인 인자들
 ):
-    if model_name.startswith(HF_HUB_PREFIX): # 허깅 페이스에서 모델 가져올 경우
-        model_name = model_name[len(HF_HUB_PREFIX):]
-        try:
-            config = _get_hf_config(model_name, cache_dir=cache_dir)['model_cfg']
-        except Exception:
-            tokenizer = HFTokenizer(
-                model_name,
-                context_length=context_length or DEFAULT_CONTEXT_LENGTH,
-                cache_dir=cache_dir,
-                **kwargs,
-            )
-            return tokenizer
-    else: # 로컬 모델 설정을 가져올 경우
-        config = get_model_config(model_name)
-        assert config is not None, f"No valid model config found for {model_name}."
+    config = get_model_config(model_name)
+    assert config is not None, f"No valid model config found for {model_name}."
 
     text_config = config.get('text_cfg', {}) # 텍스트 
     if 'tokenizer_kwargs' in text_config:
@@ -120,17 +90,9 @@ def get_tokenizer(
     if context_length is None:
         context_length = text_config.get('context_length', DEFAULT_CONTEXT_LENGTH)
 
-    if 'hf_tokenizer_name' in text_config:
-        tokenizer = HFTokenizer(
-            text_config['hf_tokenizer_name'],
-            context_length=context_length,
-            cache_dir=cache_dir,
-            **tokenizer_kwargs,
-        )
-    else:
-        tokenizer = SimpleTokenizer(
-            context_length=context_length,
-            **tokenizer_kwargs,
+    tokenizer = SimpleTokenizer(
+        context_length=context_length,
+        **tokenizer_kwargs,
         )
 
     return tokenizer
@@ -206,7 +168,7 @@ def load_checkpoint( # 가중치를 모델에 적용
     resize_text_pos_embed(state_dict, model)
 
     # Finally, load the massaged state_dict into model
-    incompatible_keys = model.load_state_dict(state_dict, strict=strict)
+    incompatible_keys = model.load_state_dict(state_dict, strict=False)
     return incompatible_keys
 
 
@@ -233,7 +195,7 @@ def create_model( # CLIP 모델 생성
     if isinstance(device, str):
         device = torch.device(device)
 
-    model_cfg = get_model_config(model_name)
+    model_cfg =get_model_config(model_name)
     if model_cfg is not None:
         logging.info(f'Loaded {model_name} model config.')
     else:

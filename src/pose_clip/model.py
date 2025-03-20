@@ -15,7 +15,7 @@ from torch import nn
 from torch.utils.checkpoint import checkpoint
 from functools import partial
 
-from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer,\
+from .transformer import LayerNormFp32, LayerNorm, QuickGELU, Attention, VisionTransformer, TextTransformer, Transformer, \
     text_global_pool
 from .utils import to_2tuple
 
@@ -100,73 +100,64 @@ def get_input_dtype(precision: str): # 입력 데이터 타입
 
 
 def _build_vision_tower( # 이미지를 벡터로 변환
-        embed_dim: int,
-        vision_cfg: CLIPVisionCfg,
-        quick_gelu: bool = False,
-        cast_dtype: Optional[torch.dtype] = None
+        embed_dim: int, # 출력 임베딩 차원
+        vision_cfg: CLIPVisionCfg, # 비전 인코더 설정
+        quick_gelu: bool = False, # 활성화 함수로 QuickGELU 사용 여부
+        cast_dtype: Optional[torch.dtype] = None # 부동소수점 연산을 위한 데이터 타입 (FP16, BF16)
 ):
-    if isinstance(vision_cfg, dict):
+    if isinstance(vision_cfg, dict): # vision_cfg가 dict 형태라면 CLIPVisionCfg 객체로 변환
         vision_cfg = CLIPVisionCfg(**vision_cfg)
 
-    # OpenAI models are pretrained w/ QuickGELU but native nn.GELU is both faster and more
-    # memory efficient in recent PyTorch releases (>= 1.10).
-    # NOTE: timm models always use native GELU regardless of quick_gelu flag.
-    act_layer = QuickGELU if quick_gelu else nn.GELU
+    act_layer = QuickGELU if quick_gelu else nn.GELU # 활성화 함수 설정
 
-    if vision_cfg.timm_model_name:
-        visual = TimmModel(
-            vision_cfg.timm_model_name,
-            pretrained=vision_cfg.timm_model_pretrained,
-            pool=vision_cfg.timm_pool,
-            proj=vision_cfg.timm_proj,
-            proj_bias=vision_cfg.timm_proj_bias,
-            drop=vision_cfg.timm_drop,
-            drop_path=vision_cfg.timm_drop_path,
-            patch_drop=vision_cfg.patch_dropout if vision_cfg.patch_dropout > 0 else None,
-            embed_dim=embed_dim,
-            image_size=vision_cfg.image_size,
-        )
-    elif isinstance(vision_cfg.layers, (tuple, list)): # vision_cfg.layers가 리스트나 튜플이면 ResNet 모델 사용
-        vision_heads = vision_cfg.width * 32 // vision_cfg.head_width
-        visual = ModifiedResNet( # ResNet 구조를 변형한 ModifiedResNet 모델 사용
-            layers=vision_cfg.layers,
-            output_dim=embed_dim,
-            heads=vision_heads,
-            image_size=vision_cfg.image_size,
-            width=vision_cfg.width,
-        )
-    else: # ViT 모델 사용
-        vision_heads = vision_cfg.width // vision_cfg.head_width
-        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm  # 부동소수점(FP16, BF16)을 사용할 경우 LayerNormFp32 사용
-        if vision_cfg.norm_kwargs: # 추가적인 정규화 설정이 있으면 적용
-            norm_layer = partial(norm_layer, **vision_cfg.norm_kwargs)
-        if vision_cfg.act_kwargs is not None: # 활성화 함수도 추가적인 설정이 있으면 적용
-            act_layer = partial(act_layer, **vision_cfg.act_kwargs)
+    vision_heads = vision_cfg.width // vision_cfg.head_width
+    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm  # 부동소수점(FP16, BF16)을 사용할 경우 LayerNormFp32 사용
+    if vision_cfg.norm_kwargs: # 추가적인 정규화 설정이 있으면 적용
+        norm_layer = partial(norm_layer, **vision_cfg.norm_kwargs)
+    if vision_cfg.act_kwargs is not None: # 활성화 함수도 추가적인 설정이 있으면 적용
+        act_layer = partial(act_layer, **vision_cfg.act_kwargs)
 
-        visual = VisionTransformer(
-            image_size=vision_cfg.image_size,
-            patch_size=vision_cfg.patch_size,
-            width=vision_cfg.width,
-            layers=vision_cfg.layers,
-            heads=vision_heads,
-            mlp_ratio=vision_cfg.mlp_ratio,
-            ls_init_value=vision_cfg.ls_init_value,
-            patch_dropout=vision_cfg.patch_dropout,
-            attentional_pool=vision_cfg.attentional_pool,
-            attn_pooler_queries=vision_cfg.attn_pooler_queries,
-            attn_pooler_heads=vision_cfg.attn_pooler_heads,
-            pos_embed_type=vision_cfg.pos_embed_type,
-            no_ln_pre=vision_cfg.no_ln_pre,
-            final_ln_after_pool=vision_cfg.final_ln_after_pool,
-            pool_type=vision_cfg.pool_type,
-            output_tokens=vision_cfg.output_tokens,
-            output_dim=embed_dim,
-            act_layer=act_layer,
-            norm_layer=norm_layer,
-        )
+    
+    visual = VisionTransformer(
+        image_size=vision_cfg.image_size,
+        patch_size=vision_cfg.patch_size,
+        width=vision_cfg.width,
+        layers=vision_cfg.layers,
+        heads=vision_heads,
+        mlp_ratio=vision_cfg.mlp_ratio,
+        ls_init_value=vision_cfg.ls_init_value,
+        patch_dropout=vision_cfg.patch_dropout,
+        attentional_pool=None,
+        attn_pooler_queries=vision_cfg.attn_pooler_queries,
+        attn_pooler_heads=vision_cfg.attn_pooler_heads,
+        pos_embed_type=vision_cfg.pos_embed_type,
+        no_ln_pre=vision_cfg.no_ln_pre,
+        final_ln_after_pool=vision_cfg.final_ln_after_pool,
+        pool_type=vision_cfg.pool_type,
+        output_tokens=vision_cfg.output_tokens,
+        output_dim=embed_dim,
+        act_layer=act_layer,
+        norm_layer=norm_layer,
+    )
 
+    print("visual : ", visual)
     return visual
 
+class TemporalTransformer(nn.Module):
+    def __init__(self, embed_dim=512, num_layers=4, num_heads=8):
+        super().__init__()
+        self.temporal_transformer = Transformer(
+            width=embed_dim,
+            layers=num_layers,
+            heads=num_heads
+        )
+
+    def forward(self, x):
+        """
+        x: (batch_size, sequence_length, embed_dim)
+        """
+        x = self.temporal_transformer(x)
+        return x.mean(dim=1)
 
 def _build_text_tower(
         embed_dim: int,
