@@ -4,6 +4,11 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
+torch = "*"
+pillow = "*"
+numpy = "*"
+pose-clip = {file = ".", editable = true}
+einops = "*"
 
 [dev-packages]
 
