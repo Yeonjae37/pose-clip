@@ -1,7 +1,7 @@
 /tools/
 /data/L2249
 /data/NTU_RGB+D
-/models/
+/models/ViT-B-32-laion2B-s34B-b79K.safetensors
 demo_realtime.py
 demo.py
 setup.py
