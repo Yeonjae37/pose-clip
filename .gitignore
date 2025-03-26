@@ -201,3 +201,6 @@ ENV/
 
 # Keep empty directories
 !**/.gitkeep
+
+# Data
+static/data/

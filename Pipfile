@@ -13,6 +13,8 @@ opencv-python = "*"
 pandas = "*"
 scikit-learn = "*"
 seaborn = "*"
+faiss-cpu = "*"
+flask = "*"
 
 [dev-packages]
 
