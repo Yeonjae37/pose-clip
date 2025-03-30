@@ -139,6 +139,7 @@ def load_checkpoint( # 가중치를 모델에 적용
         return {}
 
     state_dict = load_state_dict(checkpoint_path, device=device, weights_only=weights_only)
+    # .pt, .pth, .safetensors 등 일반적인 Pytorch 형태의 모델 로드
 
     # Detect & convert 3rd party state_dicts -> open_clip
     # state_dict = convert_state_dict(model, state_dict)
@@ -191,12 +192,15 @@ def create_model( # CLIP 모델 생성
         load_weights_only: bool = True,
         **model_kwargs,
 ):
+    
+    force_preprocess_cfg = force_preprocess_cfg or {}
+    preprocess_cfg = asdict(PreprocessCfg())
 
     if isinstance(device, str):
         device = torch.device(device)
 
-    model_cfg = get_model_config(model_name)
-    if model_cfg is not None:
+    model_cfg = get_model_config(model_name) # 모델 이름에 맞는 설정 가져오기
+    if model_cfg is not None: 
         logging.info(f'Loaded {model_name} model config.')
     else:
         logging.error(f'Model config for {model_name} not found; available models {list_models()}.')
@@ -204,7 +208,7 @@ def create_model( # CLIP 모델 생성
 
     model_cfg = dict(model_cfg, **model_kwargs)  # merge cfg dict w/ kwargs (kwargs overrides cfg)
 
-    model = CLIP(**model_cfg)
+    model = CLIP(**model_cfg) # 가져온 설정 기반으로 CLIP 클래스 인스턴스 생성
 
     dtype = {
         "fp16": torch.float16,
@@ -223,23 +227,14 @@ def create_model( # CLIP 모델 생성
     elif require_pretrained:
         raise RuntimeError(f"Pretrained model is required but no valid path was provided.")
 
-    if output_dict and hasattr(model, "output_dict"):
+    if output_dict and hasattr(model, "output_dict"): # 모델 출력을 dictonary 형태로 반환할지에 대한 여부
         model.output_dict = True
 
     force_preprocess_cfg = force_preprocess_cfg or {}
-    preprocess_cfg = {
-        'size': 224,
-        'mode': 'RGB',
-        'mean': (0.48145466, 0.4578275, 0.40821073),
-        'std': (0.26862954, 0.26130258, 0.27577711),
-        'interpolation': 'bicubic',
-        'resize_mode': 'shortest',
-        'fill_color': 0
-    }
 
-    set_model_preprocess_cfg(model, merge_preprocess_dict(preprocess_cfg, force_preprocess_cfg))
+    set_model_preprocess_cfg(model, merge_preprocess_dict(preprocess_cfg, force_preprocess_cfg)) # 모델 내부에 전처리 설정 저장
     
-    return model
+    return model # 설정과 사전학습 가중치까지 적용된 CLIP 모델 반환
 
 
 def create_loss(args):
@@ -296,12 +291,12 @@ def create_model_and_transforms(
         image_std: Optional[Tuple[float, ...]] = None,
         image_interpolation: Optional[str] = None,
         image_resize_mode: Optional[str] = None,  # only effective for inference
-        aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
-        pretrained_image: bool = False,
+        aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None, # 학습 데이터 증강용
+        pretrained_image: bool = False, 
         pretrained_hf: bool = True,
         cache_dir: Optional[str] = None,
         output_dict: Optional[bool] = None,
-        load_weights_only: bool = True,
+        load_weights_only: bool = True, # 가중치만 로드하고 optimizer나 학습 상태는 로드하지 않을지에 대한 여부
         **model_kwargs,
 ):
 
@@ -312,7 +307,7 @@ def create_model_and_transforms(
         interpolation=image_interpolation,
         resize_mode=image_resize_mode,
     )
-
+    
     model = create_model(
         model_name,
         pretrained,
@@ -332,19 +327,19 @@ def create_model_and_transforms(
         **model_kwargs,
     )
 
-    pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg)
+    pp_cfg = PreprocessCfg(**model.visual.preprocess_cfg) # 전처리 설정 구성 클래스 생성
 
-    preprocess_train = image_transform_v2(
+    preprocess_train = image_transform_v2( # 학습용 전처리 transform
         pp_cfg,
         is_train=True,
         aug_cfg=aug_cfg,
     )
-    preprocess_val = image_transform_v2(
+    preprocess_val = image_transform_v2( # 검증용 전처리 transform
         pp_cfg,
         is_train=False,
     )
 
-    return model, preprocess_train, preprocess_val
+    return model, preprocess_train, preprocess_val # 모델 객체, 학습용 transform, 검증용 transform
 
 
 def create_model_from_pretrained(

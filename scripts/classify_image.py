@@ -14,18 +14,15 @@ def classify_image(image_path, labels):
     """
     이미지-텍스트 매칭 스크립트
     """
-    #pretrained_model_path = "models/ViT-B-32-laion2B-s34B-b79K.safetensors"
-    #pretrained_model_path = "models/ViT-L-14-laion2B-s32B-b82K.safetensors"
-    pretrained_model_path = "models/ViT-g-14-laion2B-s12B-b42K.safetensors"
+    pretrained_model_path = "models/ViT-B-32-laion2B-s34B-b79K.safetensors"
     
-    model, _, preprocess = create_model_and_transforms('ViT-g-14', pretrained=pretrained_model_path)
-    #model, _, preprocess = create_model_and_transforms('ViT-g-14', pretrained=pretrained_model_path, force_image_size=224, vision_cfg=dict(patch_size=14))
+    model, _, preprocess = create_model_and_transforms('ViT-B-32', pretrained=pretrained_model_path)
 
     resize_text_pos_embed(model.state_dict(), model)
     resize_pos_embed(model.state_dict(), model)
 
     model.eval()
-    tokenizer = get_tokenizer('ViT-g-14')
+    tokenizer = get_tokenizer('ViT-B-32')
 
     image = preprocess(Image.open(image_path)).unsqueeze(0)
 

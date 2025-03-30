@@ -17,6 +17,7 @@ The project is organized as follows:
     - `pose_clip_train/`: Code for model fine-tuning
 - `Pipfile` and `Pipfile.lock`: Python dependency management
 
+
 ### **Pretrained Model Weights**
 
 To use the pretrained model, download the weight file from the following link:  [**Download Weights**](https://drive.google.com/file/d/1GFOh18QQwsAcwavmOOeg8v1ZpQmSELco/view?usp=drive_link)

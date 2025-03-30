@@ -38,8 +38,8 @@ _PREPROCESS_KEYS = set(asdict(PreprocessCfg()).keys())
 
 
 def merge_preprocess_dict(
-        base: Dict,
-        overlay: Dict,
+        base: Dict, # 기본 전처리 설정 dictionary 또는 PreprocessCfg 객체
+        overlay: Dict, # 덮어씌울 사용자 설정 dictionary
 ):
     """ Merge overlay key-value pairs on top of base preprocess cfg or dict.
     Input dicts are filtered based on PreprocessCfg fields.
@@ -283,7 +283,7 @@ def image_transform(
         aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
 ):
     mean = mean or OPENAI_DATASET_MEAN
-    if not isinstance(mean, (list, tuple)):
+    if not isinstance(mean, (list, tuple)): # 정수 하나만 들어와도 (mean, mean, mean) 형식으로 3채널 처리리
         mean = (mean,) * 3
 
     std = std or OPENAI_DATASET_STD
@@ -291,24 +291,25 @@ def image_transform(
         std = (std,) * 3
 
     interpolation = interpolation or 'bicubic'
-    assert interpolation in ['bicubic', 'bilinear', 'random']
+    assert interpolation in ['bicubic', 'bilinear', 'random'] # 보간법 선택택
     # NOTE random is ignored for interpolation_mode, so defaults to BICUBIC for inference if set
     interpolation_mode = InterpolationMode.BILINEAR if interpolation == 'bilinear' else InterpolationMode.BICUBIC
 
-    resize_mode = resize_mode or 'shortest'
-    assert resize_mode in ('shortest', 'longest', 'squash')
+    resize_mode = resize_mode or 'shortest' # 이미지를 리사이즈할 때 어떤 기준으로 할지 결정
+    assert resize_mode in ('shortest', 'longest', 'squash') 
+    # shortest: 짧은 쪽을 기준으로 리사이즈, longest: 긴 쪽을 기준으로 리사이즈, squash: 비율은 무시하고 지정된 크기로 강제 조정
 
     if isinstance(aug_cfg, dict):
-        aug_cfg = AugmentationCfg(**aug_cfg)
+        aug_cfg = AugmentationCfg(**aug_cfg) # 딕셔너리 형태로 들어오면 AugmentationCfg 클래스로 변환
     else:
-        aug_cfg = aug_cfg or AugmentationCfg()
+        aug_cfg = aug_cfg or AugmentationCfg() # 딕셔너리 형태가 아니면 AugmentationCfg 클래스 인스턴스 생성
 
-    normalize = Normalize(mean=mean, std=std)
+    normalize = Normalize(mean=mean, std=std) # 정규화 적용
 
-    if is_train:
-        aug_cfg_dict = {k: v for k, v in asdict(aug_cfg).items() if v is not None}
-        use_timm = aug_cfg_dict.pop('use_timm', False)
-        if use_timm:
+    if is_train: # 학습용 Transform 정의
+        aug_cfg_dict = {k: v for k, v in asdict(aug_cfg).items() if v is not None} # 데이터 증강 설정 클래스
+        use_timm = aug_cfg_dict.pop('use_timm', False) 
+        if use_timm: # timm 라이브러리 사용하여 transform 생성
             from timm.data import create_transform  # timm can still be optional
             if isinstance(image_size, (tuple, list)):
                 assert len(image_size) >= 2
@@ -331,7 +332,7 @@ def image_transform(
                 interpolation=interpolation,
                 **aug_cfg_dict,
             )
-        else:
+        else: # 커스텀 trasform 수동 정의
             train_transform = [
                 RandomResizedCrop(
                     image_size,
@@ -357,7 +358,7 @@ def image_transform(
             if aug_cfg_dict:
                 warnings.warn(f'Unused augmentation cfg items, specify `use_timm` to use ({list(aug_cfg_dict.keys())}).')
         return train_transform
-    else:
+    else: # 검증용 Transform 정의
         if resize_mode == 'longest':
             transforms = [
                 ResizeKeepRatio(image_size, interpolation=interpolation_mode, longest=1),
@@ -384,17 +385,17 @@ def image_transform(
             transforms += [CenterCrop(image_size)]
 
         transforms.extend([
-            _convert_to_rgb,
-            ToTensor(),
-            normalize,
+            _convert_to_rgb, # PIL 이미지를 RGB 형식으로 변환
+            ToTensor(), # (H, W, C) PIL 이미지를 (C, H, W) 형식으로 변환
+            normalize, # 정규화 적용
         ])
-        return Compose(transforms)
+        return Compose(transforms) # torchvision.transforms.Compose([...]) 형태의 transform 객체 반환
 
 
 def image_transform_v2(
-        cfg: PreprocessCfg,
-        is_train: bool,
-        aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None,
+        cfg: PreprocessCfg, # 전처리 설정을 담은 객체
+        is_train: bool, # 학습용 전처리인지 검증/테스트용 전처리인지 구분
+        aug_cfg: Optional[Union[Dict[str, Any], AugmentationCfg]] = None, # 데이터 증강 설장
 ):
     return image_transform(
         image_size=cfg.size,

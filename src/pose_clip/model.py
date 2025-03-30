@@ -143,22 +143,6 @@ def _build_vision_tower( # 이미지를 벡터로 변환
     print("visual : ", visual)
     return visual
 
-class TemporalTransformer(nn.Module):
-    def __init__(self, embed_dim=512, num_layers=4, num_heads=8):
-        super().__init__()
-        self.temporal_transformer = Transformer(
-            width=embed_dim,
-            layers=num_layers,
-            heads=num_heads
-        )
-
-    def forward(self, x):
-        """
-        x: (batch_size, sequence_length, embed_dim)
-        """
-        x = self.temporal_transformer(x)
-        return x.mean(dim=1)
-
 def _build_text_tower(
         embed_dim: int,
         text_cfg: CLIPTextCfg,
@@ -168,42 +152,32 @@ def _build_text_tower(
     if isinstance(text_cfg, dict):
         text_cfg = CLIPTextCfg(**text_cfg)
 
-    if text_cfg.hf_model_name:
-        text = HFTextEncoder(
-            text_cfg.hf_model_name,
-            output_dim=embed_dim,
-            proj_type=text_cfg.hf_proj_type,
-            pooler_type=text_cfg.hf_pooler_type,
-            pretrained=text_cfg.hf_model_pretrained,
-            output_tokens=text_cfg.output_tokens,
-        )
-    else: # OpenCLIP의 TextTransformer 모델 사용
-        act_layer = QuickGELU if quick_gelu else nn.GELU
-        norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
-        if text_cfg.norm_kwargs:
-            norm_layer = partial(norm_layer, **text_cfg.norm_kwargs)
-        if text_cfg.act_kwargs is not None:
-            act_layer = partial(act_layer, **text_cfg.act_kwargs)
+    act_layer = QuickGELU if quick_gelu else nn.GELU
+    norm_layer = LayerNormFp32 if cast_dtype in (torch.float16, torch.bfloat16) else LayerNorm
+    if text_cfg.norm_kwargs:
+        norm_layer = partial(norm_layer, **text_cfg.norm_kwargs)
+    if text_cfg.act_kwargs is not None:
+        act_layer = partial(act_layer, **text_cfg.act_kwargs)
 
-        text = TextTransformer(
-            context_length=text_cfg.context_length,
-            vocab_size=text_cfg.vocab_size,
-            width=text_cfg.width,
-            heads=text_cfg.heads,
-            layers=text_cfg.layers,
-            mlp_ratio=text_cfg.mlp_ratio,
-            ls_init_value=text_cfg.ls_init_value,
-            output_dim=embed_dim,
-            embed_cls=text_cfg.embed_cls,
-            no_causal_mask=text_cfg.no_causal_mask,
-            pad_id=text_cfg.pad_id,
-            pool_type=text_cfg.pool_type,
-            proj_type=text_cfg.proj_type,
-            proj_bias=text_cfg.proj_bias,
-            output_tokens=text_cfg.output_tokens,
-            act_layer=act_layer,
-            norm_layer=norm_layer,
-        )
+    text = TextTransformer(
+        context_length=text_cfg.context_length,
+        vocab_size=text_cfg.vocab_size,
+        width=text_cfg.width,
+        heads=text_cfg.heads,
+        layers=text_cfg.layers,
+        mlp_ratio=text_cfg.mlp_ratio,
+        ls_init_value=text_cfg.ls_init_value,
+        output_dim=embed_dim,
+        embed_cls=text_cfg.embed_cls,
+        no_causal_mask=text_cfg.no_causal_mask,
+        pad_id=text_cfg.pad_id,
+        pool_type=text_cfg.pool_type,
+        proj_type=text_cfg.proj_type,
+        proj_bias=text_cfg.proj_bias,
+        output_tokens=text_cfg.output_tokens,
+        act_layer=act_layer,
+        norm_layer=norm_layer,
+    )
     return text
 
 
@@ -212,15 +186,15 @@ class CLIP(nn.Module):
 
     def __init__(
             self,
-            embed_dim: int,
-            vision_cfg: CLIPVisionCfg,
-            text_cfg: CLIPTextCfg,
+            embed_dim: int, # 이미지, 텍스트 임베딩이 같이 매핑될 공통 임베딩 공간의 차원
+            vision_cfg: CLIPVisionCfg, # 비전 타워 설정 config 객체
+            text_cfg: CLIPTextCfg, # 텍스트 타워 설정 config 객체
             quick_gelu: bool = False,
-            init_logit_scale: float = np.log(1 / 0.07),
-            init_logit_bias: Optional[float] = None,
-            nonscalar_logit_scale: bool = False,
-            cast_dtype: Optional[torch.dtype] = None,
-            output_dict: bool = False,
+            init_logit_scale: float = np.log(1 / 0.07), # 로짓 내적 결과를 얼마나 스케일할지 초기값 설정
+            init_logit_bias: Optional[float] = None, # 로짓에 편향 추가할지 여부
+            nonscalar_logit_scale: bool = False, # 스칼라가 아닌 텐서(logit_scale) 쓸지 여부
+            cast_dtype: Optional[torch.dtype] = None, # 모델 내부의 데이터 타입
+            output_dict: bool = False, # forward 시 dict 형태로 결과 출력할지 여부
     ):
         super().__init__()
         self.output_dict = output_dict
@@ -228,15 +202,18 @@ class CLIP(nn.Module):
         self.visual = _build_vision_tower(embed_dim, vision_cfg, quick_gelu, cast_dtype)
 
         text = _build_text_tower(embed_dim, text_cfg, quick_gelu, cast_dtype)
-        self.transformer = text.transformer # 텍스트 인코더 저장
-        self.context_length = text.context_length # 문맥 길이
-        self.vocab_size = text.vocab_size # 단어 사전 크기
-        self.token_embedding = text.token_embedding # 토큰 임베딩 레이어
-        self.positional_embedding = text.positional_embedding # 위치 임베딩 레이어
-        self.ln_final = text.ln_final # 마지막 LayerNorm 
+
+        # 텍스트 관련 속성
+        self.transformer = text.transformer # 텍스트 인코더
+        self.context_length = text.context_length # 텍스트 입력 최대 길이
+        self.vocab_size = text.vocab_size # 토큰 사전 크기
+        self.token_embedding = text.token_embedding # 텍스트 토큰 임베딩 레이어
+        self.positional_embedding = text.positional_embedding # 토큰 위치 임베딩 레이어
+        self.ln_final = text.ln_final # 마지막 LayerNorm 레이어
         self.text_projection = text.text_projection # 텍스트 임베딩을 embed_dim에 맞게 변환하는 프로젝션 레이어
         self.text_pool_type = text.pool_type # 텍스트 풀링 방식 (argmax, cls, mean)
-        self.register_buffer('attn_mask', text.attn_mask, persistent=False) # 어텐션 마스크 버퍼 등록
+
+        self.register_buffer('attn_mask', text.attn_mask, persistent=False) # 어텐션 마스크를 buffer로로 등록
 
         lshape = [1] if nonscalar_logit_scale else [] 
         '''
@@ -244,7 +221,7 @@ class CLIP(nn.Module):
         lshape = [] # 스칼라 값
         '''
 
-        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale) 
+        self.logit_scale = nn.Parameter(torch.ones(lshape) * init_logit_scale)
         if init_logit_bias is not None: 
             self.logit_bias = nn.Parameter(torch.ones(lshape) * init_logit_bias)
         else:
@@ -260,7 +237,7 @@ class CLIP(nn.Module):
         self.transformer.grad_checkpointing = enable
 
     @torch.jit.ignore
-    def no_weight_decay(self): # weight decay가 적용되지 않아야 할 파라미터들 반환
+    def no_weight_decay(self): # weight decay(L2 정규화)가 적용되지 않아야 할 파라미터들 반환
         # for timm optimizers, 1d params like logit_scale, logit_bias, ln/bn scale, biases are excluded by default
         no_wd = {'positional_embedding'} # 위치 임베딩은 weight decay가 적용되지 않음
         if hasattr(self.visual, 'no_weight_decay'): # vision 모델도 no_weight_decay를 정의하고 있으면 해당 파라미터들도 추가
@@ -268,11 +245,11 @@ class CLIP(nn.Module):
                 no_wd.add('visual.' + n)
         return no_wd
 
-    def encode_image(self, image, normalize: bool = False): # 이미지 특징 벡터를 추출
+    def encode_image(self, image, normalize: bool = False): # 이미지를 비전 인코더에 넣어서 특징 벡터를 추출
         features = self.visual(image) # self.visual은 _build_vision_tower()에서 생성. Vision 모델에서 특징 추출
         return F.normalize(features, dim=-1) if normalize else features
 
-    def encode_text(self, text, normalize: bool = False): # 텍스트 특징 벡터를 추출
+    def encode_text(self, text, normalize: bool = False): # 텍스트를 토큰화하고 transformer에 넣어서 특징 벡터를 추출
         cast_dtype = self.transformer.get_cast_dtype()
 
         x = self.token_embedding(text).to(cast_dtype)  # [batch_size, n_ctx, d_model]
@@ -289,7 +266,7 @@ class CLIP(nn.Module):
 
         return F.normalize(x, dim=-1) if normalize else x
 
-    def get_logits(self, image, text): # 이미지와 텍스트 간의 유사도 계산
+    def get_logits(self, image, text): # 이미지와 텍스트의 feature를 뽑고, 유사도 계산
         image_features = self.encode_image(image, normalize=True)
         text_features = self.encode_text(text, normalize=True)
         image_logits = self.logit_scale.exp() * image_features @ text_features.T
@@ -299,7 +276,7 @@ class CLIP(nn.Module):
         # text_logits[i, j] = image_logits[j, i]
         return image_logits, text_logits
 
-    def forward( # 모델이 이미지나 텍스트를 입력받았을 때 실행되는 기본 동작 정의
+    def forward( # 모델의 기본 동작 정의. 이미지만 들어올 수도 있고, 텍스트만 들어올 수도 있음.
             self,
             image: Optional[torch.Tensor] = None,
             text: Optional[torch.Tensor] = None,
@@ -497,7 +474,7 @@ def resize_pos_embed(state_dict, model, interpolation: str = 'bicubic', antialia
 
 
 def resize_text_pos_embed(state_dict, model, interpolation: str = 'linear', antialias: bool = False):
-    old_pos_embed = state_dict.get('positional_embedding', None)
+    old_pos_embed = state_dict.get('positional_embedding', None) # 사전학습된 모델의 positional embedding
     if old_pos_embed is None:
         return
     # FIXME add support for text cls_token
