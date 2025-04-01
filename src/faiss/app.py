@@ -20,7 +20,7 @@ class App:
         self.model.eval()
         self.tokenizer = get_tokenizer("ViT-B-32")
 
-        static_dir = os.path.join(current_dir, "..", "app", "static")
+        static_dir = os.path.join(current_dir, "..", "faiss", "static")
 
         index_path = os.path.join(static_dir, "index.faiss")
         self.index = read_index(index_path)
@@ -43,17 +43,19 @@ class App:
         for item in top_results:
             print(f"{item['video']} ({item['action']})")
 
-        # Evaluation
         query_label = search_text.lower().replace(" ", "_")
         correct = [item for item in top_results if query_label in item['action'].lower()]
-        #precision = len(correct) / topk
-        #total_gt = len([item for item in self.metadata if query_label in item['action'].lower()])
-        #recall = len(correct) / total_gt if total_gt else 0.0
+        
+        #return [f"static/data/NTU_RGB+D/{item['action']}/{item['video']}" for item in top_results]
+        #return [f"static/data/ours/video/{item['video']}" for item in top_results]
 
-        #print(f"\nPrecision@{topk}: {precision:.2f}")
-        #print(f" Recall@{topk}: {recall:.2f}")
-
-        return [f"/videos/{item['action']}/{item['video']}" for item in top_results]
+        result_paths = []
+        for item in top_results:
+            if item["action"].startswith("NTU_RGB+D"):
+                result_paths.append(f"static/data/{item['action']}/{item['video']}")
+            else:  # ours/video or other
+                result_paths.append(f"static/data/{item['action']}/{item['video']}")
+        return result_paths
 
 
         

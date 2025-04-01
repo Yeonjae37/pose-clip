@@ -1,26 +1,3 @@
-/*
-document.getElementById('searchButton')
-.addEventListener('click', function() {
-    const searchTerm = document.getElementById('searchInput').value;
-    if (searchTerm.trim() !== '') {
-        const apiUrl = `/search?search_query=${searchTerm}`;
-        fetch(apiUrl)
-        .then(response => response.json())
-        .then(data => {
-            // data is a list of image urls
-            // clear any previous results in results div
-            // and add new results
-            const resultsDiv = document.getElementById('results');
-            resultsDiv.innerHTML = '';
-            data.forEach(imageUrl => {
-                const img = document.createElement('img');
-                img.src = imageUrl;
-                resultsDiv.appendChild(img);
-            });
-        });
-    }
-});*/
-
 document.getElementById('searchButton')
 .addEventListener('click', function () {
     const searchTerm = document.getElementById('searchInput').value;
@@ -34,6 +11,7 @@ document.getElementById('searchButton')
                 data.forEach(videoUrl => {
                     const video = document.createElement('video');
                     video.src = videoUrl;
+                    console.log(videoUrl);
                     video.controls = true;
                     video.style.width = "100%";
                     video.style.height = "auto";

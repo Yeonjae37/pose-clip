@@ -12,7 +12,6 @@ import cv2
 
 from pose_clip import create_model_and_transforms
 
-
 """
 Script for indexing video or image datasets using a CLIP-based visual encoder and FAISS.
 This script extracts frame/image features using a pretrained ViT model, computes embeddings,
@@ -72,7 +71,7 @@ def index_videos(video_root_dir, output_dir=None, select_dirs=None, frame_interv
     project_root = os.path.dirname(os.path.dirname(current_dir))
     pretrained_model_path = os.path.join(project_root, "models", "ViT-B-32-laion2B-s34B-b79K.safetensors")
 
-    output_dir = os.path.join(project_root, "src", "app", "static")
+    output_dir = os.path.join(project_root, "src", "faiss", "static")
 
     model, _, preprocess = create_model_and_transforms("ViT-B-32", pretrained=pretrained_model_path)
     model.eval()
@@ -122,12 +121,15 @@ def index_videos(video_root_dir, output_dir=None, select_dirs=None, frame_interv
                 features.append(avg_embedding)
                 video_metadata.append({
                     "video": video_file,
-                    "action": action_dir
+                    "action": action_dir if action_dir != "." else ""
                 })
 
-    features = np.stack(features).astype(np.float32)
-    save_faiss_index(features, video_metadata, output_dir, index_name="index.faiss", json_name="video_metadata.json")
-    print(f"\nIndexed {len(video_metadata)} videos. Saved to {output_dir}")
+    if features:
+        features = np.stack(features).astype(np.float32)
+        save_faiss_index(features, video_metadata, output_dir, index_name="index.faiss", json_name="video_metadata.json")
+        print(f"\nIndexed {len(video_metadata)} videos. Saved to {output_dir}")
+    else:
+        print("No videos found or no embeddings generated.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
